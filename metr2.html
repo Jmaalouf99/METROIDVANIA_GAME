@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Haytham's Echo - Browser Metroidvania</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            margin: 0;
+            background: radial-gradient(circle at 20% 20%, rgba(60, 80, 100, 0.3), transparent 55%),
+                        radial-gradient(circle at 80% 10%, rgba(20, 40, 80, 0.35), transparent 60%),
+                        #05040a;
+            color: #cbd5ff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        h1 {
+            margin: 12px 0 4px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+        #game-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 12px 32px;
+        }
+        canvas {
+            border-radius: 18px;
+            box-shadow: 0 40px 80px rgba(0, 0, 0, 0.6);
+            background: linear-gradient(#0a0c16, #010107 75%, #05070f);
+            max-width: min(96vw, 960px);
+            width: 100%;
+            height: auto;
+            image-rendering: pixelated;
+        }
+        #legend {
+            max-width: min(96vw, 960px);
+            padding: 12px 18px;
+            background: rgba(8, 12, 18, 0.92);
+            border-radius: 14px;
+            border: 1px solid rgba(88, 124, 188, 0.25);
+            backdrop-filter: blur(6px);
+            line-height: 1.4;
+        }
+        #legend strong {
+            color: #7ca7ff;
+        }
+        #downloadButton {
+            margin-top: 12px;
+            align-self: center;
+            background: linear-gradient(135deg, #1c2644, #384f90);
+            color: #f2f6ff;
+            border: none;
+            border-radius: 14px;
+            padding: 10px 22px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        #downloadButton:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        }
+        #downloadButton:active {
+            transform: translateY(2px);
+        }
+        a {
+            color: #8faeff;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <h1>Haytham's Echo</h1>
+        <canvas id="game" width="960" height="540"></canvas>
+        <img id="haythamSpriteSheet" src="Media/haytham_walk.png" alt="Haytham walking sprite sheet" style="display: none" aria-hidden="true" />
+        <div id="legend">
+            <p><strong>Controls</strong>: Arrow Keys — Move &amp; aim sword • <strong>Z</strong> — Slash • <strong>X</strong> — Jump (double jump) • <strong>A</strong> — Heal using Chi • <strong>S</strong> — Save • <strong>R</strong> — Reload from last save</p>
+            <p>Haytham is a wandering swordsman attuned to the echoes of a forgotten kingdom. Strike foes to gather <em>Chi</em>, heal mid-battle, and explore the twilight caverns inspired by Hollow Knight.</p>
+            <button id="downloadButton">Download Offline Copy</button>
+        </div>
+    </div>
+    <script>
+        const canvas = document.getElementById("game");
+        const ctx = canvas.getContext("2d");
+        const haythamSpriteSheet = document.getElementById("haythamSpriteSheet");
+        let haythamSpriteReady = false;
+        let haythamSpriteDataURL = "";
+        function inlineHaythamSprite() {
+            if (!haythamSpriteSheet) return;
+            if (!haythamSpriteSheet.naturalWidth || !haythamSpriteSheet.naturalHeight) return;
+            haythamSpriteReady = true;
+            if (haythamSpriteSheet.src.startsWith("data:")) {
+                haythamSpriteDataURL = haythamSpriteSheet.src;
+                haythamSpriteSheet.dataset.inline = haythamSpriteDataURL;
+                return;
+            }
+            try {
+                const buffer = document.createElement("canvas");
+                buffer.width = haythamSpriteSheet.naturalWidth;
+                buffer.height = haythamSpriteSheet.naturalHeight;
+                const bufferCtx = buffer.getContext("2d");
+                bufferCtx.drawImage(haythamSpriteSheet, 0, 0);
+                haythamSpriteDataURL = buffer.toDataURL("image/png");
+                haythamSpriteSheet.src = haythamSpriteDataURL;
+                haythamSpriteSheet.dataset.inline = haythamSpriteDataURL;
+            } catch (error) {
+                console.warn("Unable to inline Haytham sprite sheet for offline download.", error);
+                haythamSpriteDataURL = haythamSpriteSheet.src;
+                haythamSpriteSheet.dataset.inline = haythamSpriteDataURL;
+            }
+        }
+        if (haythamSpriteSheet.complete && haythamSpriteSheet.naturalWidth) {
+            inlineHaythamSprite();
+        } else {
+            haythamSpriteSheet.addEventListener("load", inlineHaythamSprite);
+            haythamSpriteSheet.addEventListener("error", () => {
+                haythamSpriteReady = false;
+            });
+        }
+        let pixelRatio = window.devicePixelRatio || 1;
+
+        function resizeCanvas() {
+            pixelRatio = window.devicePixelRatio || 1;
+            const width = 960;
+            const height = 540;
+            canvas.width = width * pixelRatio;
+            canvas.height = height * pixelRatio;
+            canvas.style.width = width + "px";
+            canvas.style.height = height + "px";
+            ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        }
+        resizeCanvas();
+        window.addEventListener("resize", resizeCanvas);
+
+        const input = {
+            held: {},
+            pressed: new Set(),
+            released: new Set(),
+        };
+
+        function addPivot(frames) {
+            return frames.map((frame) => ({ ...frame, ox: frame.sw / 2, oy: frame.sh }));
+        }
+
+        const HAYTHAM_SPRITE_FRAMES = {
+            left: addPivot([
+                { sx: 8, sy: 7, sw: 36, sh: 47 },
+                { sx: 80, sy: 8, sw: 28, sh: 46 },
+                { sx: 147, sy: 7, sw: 25, sh: 48 },
+                { sx: 208, sy: 7, sw: 29, sh: 46 },
+                { sx: 268, sy: 7, sw: 34, sh: 47 },
+                { sx: 326, sy: 8, sw: 42, sh: 46 },
+                { sx: 388, sy: 7, sw: 42, sh: 47 },
+                { sx: 451, sy: 7, sw: 42, sh: 47 },
+                { sx: 518, sy: 7, sw: 38, sh: 47 },
+            ]),
+            turn: addPivot([
+                { sx: 17, sy: 70, sw: 30, sh: 48 },
+                { sx: 81, sy: 70, sw: 30, sh: 48 },
+                { sx: 145, sy: 70, sw: 30, sh: 49 },
+                { sx: 210, sy: 71, sw: 29, sh: 48 },
+                { sx: 273, sy: 70, sw: 30, sh: 49 },
+                { sx: 337, sy: 70, sw: 30, sh: 48 },
+                { sx: 401, sy: 70, sw: 30, sh: 49 },
+                { sx: 465, sy: 71, sw: 29, sh: 48 },
+                { sx: 529, sy: 70, sw: 30, sh: 49 },
+            ]),
+            right: addPivot([
+                { sx: 20, sy: 135, sw: 36, sh: 47 },
+                { sx: 84, sy: 136, sw: 28, sh: 46 },
+                { sx: 148, sy: 135, sw: 25, sh: 48 },
+                { sx: 211, sy: 135, sw: 29, sh: 46 },
+                { sx: 274, sy: 135, sw: 34, sh: 47 },
+                { sx: 336, sy: 136, sw: 42, sh: 46 },
+                { sx: 402, sy: 135, sw: 42, sh: 47 },
+                { sx: 467, sy: 135, sw: 42, sh: 47 },
+                { sx: 532, sy: 135, sw: 38, sh: 47 },
+            ]),
+        };
+
+        const HAYTHAM_BASE_FRAME_HEIGHT = 48;
+        const HAYTHAM_WALK_FPS = 10;
+        const HAYTHAM_WALK_SPEED_THRESHOLD = 30;
+        const HAYTHAM_TURN_FRAME_DURATION = 0.06;
+
+        function isMoveKey(code) {
+            return code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight";
+        }
+
+        window.addEventListener("keydown", (event) => {
+            if (isMoveKey(event.code) || event.code === "KeyZ" || event.code === "KeyX" || event.code === "KeyA" || event.code === "KeyS" || event.code === "KeyR") {
+                event.preventDefault();
+            }
+            if (!input.held[event.code]) {
+                input.pressed.add(event.code);
+            }
+            input.held[event.code] = true;
+        });
+
+        window.addEventListener("keyup", (event) => {
+            delete input.held[event.code];
+            input.released.add(event.code);
+        });
+
+        const world = {
+            width: 3200,
+            height: 1600,
+            gravity: 1600,
+        };
+
+        class Camera {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.viewportWidth = 960;
+                this.viewportHeight = 540;
+            }
+            follow(target) {
+                const lerpFactor = 0.12;
+                const desiredX = target.x + target.width / 2 - this.viewportWidth / 2;
+                const desiredY = target.y + target.height / 2 - this.viewportHeight / 2;
+                this.x += (desiredX - this.x) * lerpFactor;
+                this.y += (desiredY - this.y) * lerpFactor;
+                this.x = Math.max(0, Math.min(world.width - this.viewportWidth, this.x));
+                this.y = Math.max(0, Math.min(world.height - this.viewportHeight, this.y));
+            }
+        }
+
+        class Entity {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.width = width;
+                this.height = height;
+            }
+            get left() {
+                return this.x;
+            }
+            get right() {
+                return this.x + this.width;
+            }
+            get top() {
+                return this.y;
+            }
+            get bottom() {
+                return this.y + this.height;
+            }
+            intersects(other) {
+                return !(this.right < other.left || this.left > other.right || this.bottom < other.top || this.top > other.bottom);
+            }
+        }
+
+        class Player extends Entity {
+            constructor(x, y) {
+                super(x, y, 50, 72);
+                this.speed = 260;
+                this.acceleration = 2400;
+                this.maxHealth = 5;
+                this.health = this.maxHealth;
+                this.chi = 50;
+                this.maxChi = 100;
+                this.chiGainPerHit = 25;
+                this.jumpForce = 600;
+                this.doubleJumpForce = 560;
+                this.airJumpsRemaining = Infinity;
+                this.onGround = false;
+                this.facing = 1;
+                this.invulnerableTimer = 0;
+                this.attackCooldown = 0;
+                this.currentAttack = null;
+                this.attackTimer = 0;
+                this.renderFacing = this.facing;
+                this.walkFrameProgress = 0;
+                this.turnAnimation = null;
+                this.spriteScale = this.height / HAYTHAM_BASE_FRAME_HEIGHT;
+                this.savePoint = { x, y: y };
+            }
+            resetState() {
+                this.vx = 0;
+                this.vy = 0;
+                this.onGround = false;
+                this.airJumpsRemaining = Infinity;
+                this.attackTimer = 0;
+                this.currentAttack = null;
+                this.turnAnimation = null;
+                this.walkFrameProgress = 0;
+                this.renderFacing = this.facing;
+            }
+            applyInput(dt) {
+                const targetSpeed = (input.held["ArrowLeft"] ? -1 : 0) + (input.held["ArrowRight"] ? 1 : 0);
+                if (targetSpeed !== 0) {
+                    this.facing = targetSpeed;
+                    this.vx += targetSpeed * this.acceleration * dt;
+                } else {
+                    const friction = this.onGround ? 1400 : 600;
+                    if (this.vx > 0) {
+                        this.vx = Math.max(0, this.vx - friction * dt);
+                    } else if (this.vx < 0) {
+                        this.vx = Math.min(0, this.vx + friction * dt);
+                    }
+                }
+                this.vx = Math.max(-this.speed, Math.min(this.speed, this.vx));
+
+                if (input.pressed.has("KeyX")) {
+                    if (this.onGround) {
+                        this.vy = -this.jumpForce;
+                        this.onGround = false;
+                        this.airJumpsRemaining = Infinity;
+                        level.spawnDust(this.x + this.width / 2, this.y + this.height, 1);
+                    } else if (this.airJumpsRemaining > 0) {
+                        this.vy = -this.doubleJumpForce;
+                        this.airJumpsRemaining -= 1;
+                        level.spawnDust(this.x + this.width / 2, this.y + this.height / 2, 1);
+                    }
+                }
+
+                if (input.pressed.has("KeyZ") && this.attackCooldown <= 0) {
+                    this.performAttack();
+                }
+
+                if (input.pressed.has("KeyA")) {
+                    this.heal();
+                }
+
+                if (input.pressed.has("KeyS")) {
+                    saveGame();
+                    level.flashSave(this.x + this.width / 2, this.y + this.height / 2);
+                }
+
+                if (input.pressed.has("KeyR")) {
+                    level.respawn(true);
+                }
+            }
+            performAttack() {
+                const direction = this.getAttackDirection();
+                const attackDuration = 0.18;
+                this.attackTimer = attackDuration;
+                this.attackCooldown = 0.28;
+                const reach = 70;
+                const hitboxWidth = direction.x === 0 ? 64 : 86;
+                const hitboxHeight = direction.y === 0 ? 70 : 80;
+                const attack = new Attack(
+                    this.x + this.width / 2 + direction.x * reach - hitboxWidth / 2,
+                    this.y + this.height / 2 + direction.y * reach - hitboxHeight / 2,
+                    hitboxWidth,
+                    hitboxHeight,
+                    direction
+                );
+                this.currentAttack = attack;
+                level.attacks.push(attack);
+                level.spawnSlash(this, direction);
+                level.playSwordSound();
+            }
+            getAttackDirection() {
+                let ax = 0;
+                let ay = 0;
+                if (input.held["ArrowLeft"]) ax -= 1;
+                if (input.held["ArrowRight"]) ax += 1;
+                if (input.held["ArrowUp"]) ay -= 1;
+                if (input.held["ArrowDown"]) ay += 1;
+                if (ax === 0 && ay === 0) {
+                    ax = this.facing;
+                }
+                const length = Math.hypot(ax, ay) || 1;
+                return { x: ax / length, y: ay / length };
+            }
+            heal() {
+                const chiCost = this.maxChi / 2;
+                if (this.chi >= chiCost && this.health < this.maxHealth) {
+                    this.chi -= chiCost;
+                    this.health = Math.min(this.maxHealth, this.health + 3);
+                    level.spawnHealBurst(this.x + this.width / 2, this.y + this.height / 2);
+                    level.playHealSound();
+                }
+            }
+            takeDamage(amount) {
+                if (this.invulnerableTimer > 0) return;
+                this.health -= amount;
+                this.invulnerableTimer = 1.2;
+                level.spawnDamageBurst(this.x + this.width / 2, this.y + this.height / 2);
+                level.playHurtSound();
+                if (this.health <= 0) {
+                    level.respawn(false);
+                }
+            }
+            gainChi(amount) {
+                this.chi = Math.min(this.maxChi, this.chi + amount);
+            }
+            update(dt) {
+                this.applyInput(dt);
+
+                this.vy += world.gravity * dt;
+                if (this.vy > 1200) this.vy = 1200;
+
+                const attemptedX = this.x + this.vx * dt;
+                const attemptedY = this.y + this.vy * dt;
+
+                this.x = this.resolveAxisCollision(attemptedX, true);
+                const newY = this.resolveAxisCollision(attemptedY, false);
+                if (newY !== attemptedY) {
+                    if (this.vy > 300) {
+                        level.spawnDust(this.x + this.width / 2, this.y + this.height, Math.min(4, Math.abs(this.vy) / 300));
+                    }
+                    this.vy = 0;
+                }
+                const wasOnGround = this.onGround;
+                this.onGround = newY === attemptedY && this.vy === 0 && this.isStandingOnGround();
+                if (this.onGround && !wasOnGround) {
+                    this.airJumpsRemaining = Infinity;
+                }
+                this.y = newY;
+
+                if (this.x < 0) this.x = 0;
+                if (this.y < 0) this.y = 0;
+                if (this.x + this.width > world.width) this.x = world.width - this.width;
+                if (this.y > world.height + 600) {
+                    level.respawn(false);
+                }
+
+                if (this.attackCooldown > 0) this.attackCooldown -= dt;
+                if (this.invulnerableTimer > 0) this.invulnerableTimer -= dt;
+                if (this.attackTimer > 0) {
+                    this.attackTimer -= dt;
+                } else {
+                    this.currentAttack = null;
+                }
+
+                this.updateSpriteAnimation(dt);
+            }
+            updateSpriteAnimation(dt) {
+                const speed = Math.abs(this.vx);
+                if (!this.onGround) {
+                    this.turnAnimation = null;
+                    if (this.facing !== 0) {
+                        this.renderFacing = this.facing;
+                    }
+                } else {
+                    if (this.turnAnimation) {
+                        if (this.turnAnimation.direction !== this.facing) {
+                            this.turnAnimation = {
+                                direction: this.facing,
+                                index:
+                                    this.facing === 1
+                                        ? 0
+                                        : HAYTHAM_SPRITE_FRAMES.turn.length - 1,
+                                timer: 0,
+                            };
+                            this.walkFrameProgress = 0;
+                        }
+                    } else if (this.facing !== this.renderFacing) {
+                        this.turnAnimation = {
+                            direction: this.facing,
+                            index:
+                                this.facing === 1
+                                    ? 0
+                                    : HAYTHAM_SPRITE_FRAMES.turn.length - 1,
+                            timer: 0,
+                        };
+                        this.walkFrameProgress = 0;
+                    }
+
+                    if (this.turnAnimation) {
+                        const frames = HAYTHAM_SPRITE_FRAMES.turn;
+                        this.turnAnimation.timer += dt;
+                        while (this.turnAnimation.timer >= HAYTHAM_TURN_FRAME_DURATION) {
+                            this.turnAnimation.timer -= HAYTHAM_TURN_FRAME_DURATION;
+                            this.turnAnimation.index += this.turnAnimation.direction;
+                            if (this.turnAnimation.direction === 1 && this.turnAnimation.index >= frames.length) {
+                                this.renderFacing = 1;
+                                this.turnAnimation = null;
+                                break;
+                            }
+                            if (this.turnAnimation && this.turnAnimation.direction === -1 && this.turnAnimation.index < 0) {
+                                this.renderFacing = -1;
+                                this.turnAnimation = null;
+                                break;
+                            }
+                        }
+                    } else {
+                        this.renderFacing = this.facing || this.renderFacing;
+                    }
+                }
+
+                if (this.onGround && speed > HAYTHAM_WALK_SPEED_THRESHOLD) {
+                    const normalized = Math.min(1, speed / this.speed);
+                    this.walkFrameProgress =
+                        (this.walkFrameProgress + dt * (HAYTHAM_WALK_FPS + normalized * HAYTHAM_WALK_FPS)) %
+                        HAYTHAM_SPRITE_FRAMES.right.length;
+                } else if (!this.onGround) {
+                    this.walkFrameProgress = 0;
+                } else {
+                    this.walkFrameProgress = 0;
+                }
+            }
+            getSpriteFrame() {
+                if (!haythamSpriteSheet || !haythamSpriteReady) return null;
+                if (this.turnAnimation) {
+                    const frames = HAYTHAM_SPRITE_FRAMES.turn;
+                    const index = Math.max(0, Math.min(frames.length - 1, this.turnAnimation.index));
+                    return frames[index];
+                }
+                const orientation = this.renderFacing >= 0 ? "right" : "left";
+                const frames = HAYTHAM_SPRITE_FRAMES[orientation];
+                if (!frames) return null;
+                if (!this.onGround) {
+                    if (this.vy < -150) {
+                        return frames[Math.min(frames.length - 1, 2)];
+                    }
+                    if (this.vy > 220) {
+                        return frames[Math.max(0, frames.length - 2)];
+                    }
+                    return frames[Math.floor(frames.length / 2)];
+                }
+                if (Math.abs(this.vx) > HAYTHAM_WALK_SPEED_THRESHOLD) {
+                    const frameIndex = Math.floor(this.walkFrameProgress) % frames.length;
+                    return frames[frameIndex];
+                }
+                return frames[0];
+            }
+            resolveAxisCollision(target, horizontal) {
+                const original = horizontal ? this.x : this.y;
+                const size = horizontal ? this.width : this.height;
+                let newPos = target;
+                for (const platform of level.platforms) {
+                    if (!platform.collidable) continue;
+                    if (horizontal) {
+                        const nextRect = { left: newPos, right: newPos + size, top: this.y, bottom: this.y + this.height };
+                        if (rectsOverlap(nextRect, platform)) {
+                            if (this.vx > 0) {
+                                newPos = platform.left - size - 0.01;
+                            } else if (this.vx < 0) {
+                                newPos = platform.right + 0.01;
+                            }
+                            this.vx = 0;
+                        }
+                    } else {
+                        const nextRect = { left: this.x, right: this.x + this.width, top: newPos, bottom: newPos + size };
+                        if (rectsOverlap(nextRect, platform)) {
+                            if (this.vy > 0) {
+                                newPos = platform.top - size - 0.01;
+                                this.onGround = true;
+                            } else if (this.vy < 0) {
+                                newPos = platform.bottom + 0.01;
+                            }
+                            this.vy = 0;
+                        }
+                    }
+                }
+                return newPos;
+            }
+            isStandingOnGround() {
+                const tolerance = 1;
+                const footRect = {
+                    left: this.x + 6,
+                    right: this.x + this.width - 6,
+                    top: this.y + this.height - tolerance,
+                    bottom: this.y + this.height + tolerance,
+                };
+                return level.platforms.some((platform) => platform.collidable && rectsOverlap(footRect, platform));
+            }
+            draw(ctx, camera) {
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+
+                const shadowX = this.x + this.width / 2;
+                const shadowY = this.y + this.height - 4;
+                ctx.fillStyle = "rgba(8, 11, 22, 0.55)";
+                ctx.beginPath();
+                ctx.ellipse(shadowX, shadowY, 22, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                const frame = this.getSpriteFrame();
+                const flicker = this.invulnerableTimer > 0 && Math.floor(this.invulnerableTimer * 30) % 2 === 0;
+                if (frame && haythamSpriteReady) {
+                    if (!flicker) {
+                        const scale = this.spriteScale;
+                        const destWidth = frame.sw * scale;
+                        const destHeight = frame.sh * scale;
+                        const drawX = shadowX - frame.ox * scale;
+                        const drawY = this.y + this.height - destHeight;
+                        ctx.drawImage(
+                            haythamSpriteSheet,
+                            frame.sx,
+                            frame.sy,
+                            frame.sw,
+                            frame.sh,
+                            drawX,
+                            drawY,
+                            destWidth,
+                            destHeight
+                        );
+                    }
+                } else if (!flicker) {
+                    ctx.fillStyle = "#1a2740";
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+
+                ctx.restore();
+
+                if (this.currentAttack) {
+                    this.currentAttack.draw(ctx, camera);
+                }
+            }
+        }
+
+        class Attack extends Entity {
+            constructor(x, y, width, height, direction) {
+                super(x, y, width, height);
+                this.life = 0.15;
+                this.direction = direction;
+                this.hitEnemies = new Set();
+            }
+            update(dt) {
+                this.life -= dt;
+            }
+            draw(ctx, camera) {
+                if (this.life <= 0) return;
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+                const alpha = Math.max(0, this.life / 0.15);
+                const gradient = ctx.createLinearGradient(this.x, this.y, this.x + this.width, this.y + this.height);
+                gradient.addColorStop(0, `rgba(160, 220, 255, ${0.35 * alpha})`);
+                gradient.addColorStop(1, `rgba(44, 130, 255, ${0.65 * alpha})`);
+                ctx.fillStyle = gradient;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.restore();
+            }
+        }
+
+        class Enemy extends Entity {
+            constructor(x, y, patrolRange = 120, speed = 60, health = 2) {
+                super(x, y, 54, 50);
+                this.originX = x;
+                this.patrolRange = patrolRange;
+                this.speed = speed;
+                this.health = health;
+                this.maxHealth = health;
+                this.direction = 1;
+                this.invulnerableTimer = 0;
+            }
+            update(dt) {
+                this.vx = this.direction * this.speed;
+                const attemptedX = this.x + this.vx * dt;
+                const attemptedY = this.y + this.vy * dt;
+
+                this.vy += world.gravity * dt;
+                this.vy = Math.min(this.vy, 800);
+
+                this.x = this.resolveAxisCollision(attemptedX, true);
+                const newY = this.resolveAxisCollision(attemptedY, false);
+                if (newY !== attemptedY) {
+                    this.vy = 0;
+                }
+                this.y = newY;
+
+                if (Math.abs(this.x - this.originX) > this.patrolRange) {
+                    this.direction *= -1;
+                }
+
+                if (this.invulnerableTimer > 0) this.invulnerableTimer -= dt;
+            }
+            resolveAxisCollision(target, horizontal) {
+                const original = horizontal ? this.x : this.y;
+                const size = horizontal ? this.width : this.height;
+                let newPos = target;
+                for (const platform of level.platforms) {
+                    if (!platform.collidable) continue;
+                    if (horizontal) {
+                        const rect = { left: newPos, right: newPos + size, top: this.y, bottom: this.y + this.height };
+                        if (rectsOverlap(rect, platform)) {
+                            if (this.vx > 0) {
+                                newPos = platform.left - size - 0.01;
+                            } else if (this.vx < 0) {
+                                newPos = platform.right + 0.01;
+                            }
+                            this.direction *= -1;
+                            this.vx = 0;
+                        }
+                    } else {
+                        const rect = { left: this.x, right: this.x + this.width, top: newPos, bottom: newPos + size };
+                        if (rectsOverlap(rect, platform)) {
+                            if (this.vy > 0) {
+                                newPos = platform.top - size - 0.01;
+                            } else if (this.vy < 0) {
+                                newPos = platform.bottom + 0.01;
+                            }
+                            this.vy = 0;
+                        }
+                    }
+                }
+                return newPos;
+            }
+            takeDamage(amount) {
+                if (this.invulnerableTimer > 0) return false;
+                this.health -= amount;
+                this.invulnerableTimer = 0.3;
+                level.spawnEnemyHit(this.x + this.width / 2, this.y + this.height / 2);
+                if (this.health <= 0) {
+                    level.spawnEnemyDeath(this.x + this.width / 2, this.y + this.height / 2);
+                }
+                return this.health <= 0;
+            }
+            draw(ctx, camera) {
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+                const px = this.x + this.width / 2;
+                const py = this.y + this.height / 2;
+
+                const sway = Math.sin(performance.now() / 500 + px * 0.01) * 4;
+                ctx.translate(px, py);
+                ctx.scale(this.direction, 1);
+
+                const bodyGradient = ctx.createLinearGradient(-20, -20, 20, 30);
+                bodyGradient.addColorStop(0, "#0f1930");
+                bodyGradient.addColorStop(1, "#1f2d50");
+                ctx.fillStyle = bodyGradient;
+                ctx.beginPath();
+                ctx.ellipse(0, 6, 24, 28, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = "rgba(160, 200, 255, 0.9)";
+                ctx.beginPath();
+                ctx.ellipse(-8, -2 + sway * 0.25, 6, 10, 0, 0, Math.PI * 2);
+                ctx.ellipse(8, 2 - sway * 0.25, 6, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = "rgba(255,255,255,0.2)";
+                ctx.fillRect(-20, 24, 40, 10);
+
+                ctx.restore();
+            }
+        }
+
+        class Platform {
+            constructor(x, y, width, height, options = {}) {
+                this.left = x;
+                this.top = y;
+                this.width = width;
+                this.height = height;
+                this.right = x + width;
+                this.bottom = y + height;
+                this.collidable = options.collidable !== false;
+                this.type = options.type || "stone";
+            }
+            draw(ctx, camera) {
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+                const gradient = ctx.createLinearGradient(this.left, this.top, this.left, this.bottom);
+                gradient.addColorStop(0, this.type === "stone" ? "#121a2c" : "#1b243a");
+                gradient.addColorStop(1, this.type === "stone" ? "#090d18" : "#0a111f");
+                ctx.fillStyle = gradient;
+                ctx.fillRect(this.left, this.top, this.width, this.height);
+                ctx.strokeStyle = "rgba(90, 130, 190, 0.12)";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.left, this.top, this.width, this.height);
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, vx, vy, life, color, size = 6) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.life = life;
+                this.maxLife = life;
+                this.color = color;
+                this.size = size;
+            }
+            update(dt) {
+                this.life -= dt;
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+                this.vy += world.gravity * dt * 0.15;
+            }
+            draw(ctx, camera) {
+                if (this.life <= 0) return;
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+                const alpha = Math.max(0, this.life / this.maxLife);
+                ctx.fillStyle = this.color.replace("{a}", alpha.toFixed(3));
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, Math.max(2, this.size * alpha), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class SaveGlyph {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 28;
+                this.pulse = Math.random() * Math.PI * 2;
+            }
+            draw(ctx, camera) {
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+                ctx.translate(this.x, this.y);
+                this.pulse += 0.01;
+                const alpha = 0.4 + Math.sin(this.pulse) * 0.2;
+                const gradient = ctx.createRadialGradient(0, 0, 2, 0, 0, this.radius);
+                gradient.addColorStop(0, `rgba(110, 200, 255, ${alpha})`);
+                gradient.addColorStop(1, "rgba(20, 40, 70, 0)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = `rgba(160, 230, 255, ${alpha + 0.25})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, 18 + Math.sin(this.pulse * 2) * 4, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.fillStyle = "rgba(180, 240, 255, 0.9)";
+                ctx.beginPath();
+                ctx.moveTo(-10, 4);
+                ctx.lineTo(0, -18);
+                ctx.lineTo(10, 4);
+                ctx.lineTo(0, 18);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        const level = {
+            camera: new Camera(),
+            player: new Player(280, 900),
+            platforms: [],
+            enemies: [],
+            attacks: [],
+            particles: [],
+            glyphs: [],
+            ambientTimer: 0,
+            swordTimer: 0,
+            healTimer: 0,
+            hurtTimer: 0,
+            lastSave: null,
+            backgroundStars: [],
+            init() {
+                this.createPlatforms();
+                this.createEnemies();
+                this.createGlyphs();
+                this.createBackground();
+                this.loadGame();
+            },
+            createPlatforms() {
+                const floorSegments = [
+                    new Platform(-80, 1080, 900, 220),
+                    new Platform(720, 1020, 420, 280),
+                    new Platform(1100, 960, 480, 340),
+                    new Platform(1500, 900, 360, 400),
+                    new Platform(1840, 840, 420, 460),
+                    new Platform(2240, 960, 440, 360),
+                    new Platform(2680, 1040, 520, 280),
+                    new Platform(3000, 1180, 260, 220),
+                ];
+                const midPlatforms = [
+                    new Platform(320, 780, 240, 32),
+                    new Platform(620, 660, 220, 32),
+                    new Platform(920, 720, 220, 32),
+                    new Platform(1200, 620, 280, 32),
+                    new Platform(1520, 520, 260, 32),
+                    new Platform(1860, 620, 220, 32),
+                    new Platform(2100, 520, 200, 32),
+                    new Platform(2340, 460, 220, 32),
+                    new Platform(2580, 380, 220, 32),
+                    new Platform(2900, 320, 280, 32),
+                ];
+                const upperPlatforms = [
+                    new Platform(540, 360, 200, 32),
+                    new Platform(820, 280, 200, 32),
+                    new Platform(1100, 240, 200, 32),
+                    new Platform(1380, 300, 200, 32),
+                    new Platform(1680, 260, 220, 32),
+                    new Platform(1980, 220, 240, 32),
+                ];
+                this.platforms = [...floorSegments, ...midPlatforms, ...upperPlatforms];
+            },
+            createEnemies() {
+                const layout = [
+                    { x: 360, y: 720, range: 90, speed: 70, health: 1 },
+                    { x: 680, y: 600, range: 120, speed: 80, health: 2 },
+                    { x: 980, y: 660, range: 160, speed: 70, health: 2 },
+                    { x: 1320, y: 560, range: 200, speed: 90, health: 2 },
+                    { x: 1580, y: 460, range: 140, speed: 70, health: 1 },
+                    { x: 1880, y: 560, range: 160, speed: 60, health: 2 },
+                    { x: 2120, y: 500, range: 150, speed: 80, health: 2 },
+                    { x: 2360, y: 440, range: 150, speed: 90, health: 2 },
+                    { x: 2620, y: 360, range: 180, speed: 80, health: 2 },
+                    { x: 2940, y: 300, range: 210, speed: 70, health: 3 },
+                ];
+                this.enemies = layout.map((data) => new Enemy(data.x, data.y, data.range, data.speed, data.health));
+            },
+            createGlyphs() {
+                const glyphPositions = [
+                    { x: 360, y: 880 },
+                    { x: 1420, y: 880 },
+                    { x: 2260, y: 880 },
+                    { x: 2950, y: 280 },
+                ];
+                this.glyphs = glyphPositions.map((pos) => new SaveGlyph(pos.x, pos.y));
+            },
+            createBackground() {
+                this.backgroundStars = new Array(180).fill(0).map(() => ({
+                    x: Math.random() * world.width,
+                    y: Math.random() * world.height,
+                    size: Math.random() * 2 + 1,
+                    twinkle: Math.random() * Math.PI * 2,
+                }));
+            },
+            loadGame() {
+                try {
+                    const data = localStorage.getItem("haythamEchoSave");
+                    if (data) {
+                        const parsed = JSON.parse(data);
+                        if (typeof parsed.x === "number" && typeof parsed.y === "number") {
+                            this.lastSave = parsed;
+                            this.player.x = parsed.x;
+                            this.player.y = parsed.y;
+                            this.player.savePoint = { x: parsed.x, y: parsed.y };
+                        }
+                        if (typeof parsed.chi === "number") {
+                            this.player.chi = Math.max(0, Math.min(this.player.maxChi, parsed.chi));
+                        }
+                        if (typeof parsed.health === "number") {
+                            this.player.health = Math.max(1, Math.min(this.player.maxHealth, parsed.health));
+                        }
+                    } else {
+                        this.lastSave = { x: this.player.x, y: this.player.y };
+                    }
+                } catch (error) {
+                    console.warn("Save data could not be loaded:", error);
+                    this.lastSave = { x: this.player.x, y: this.player.y };
+                }
+            },
+            update(dt) {
+                this.ambientTimer += dt;
+                this.player.update(dt);
+                this.camera.follow(this.player);
+
+                for (const attack of this.attacks) {
+                    attack.update(dt);
+                }
+                this.attacks = this.attacks.filter((a) => a.life > 0);
+
+                for (const enemy of this.enemies) {
+                    enemy.update(dt);
+                    if (enemy.intersects(this.player)) {
+                        this.player.takeDamage(1);
+                    }
+                }
+                this.enemies = this.enemies.filter((enemy) => enemy.health > 0);
+
+                for (const attack of this.attacks) {
+                    for (const enemy of this.enemies) {
+                        if (!attack.hitEnemies.has(enemy) && attack.intersects(enemy)) {
+                            const defeated = enemy.takeDamage(1);
+                            attack.hitEnemies.add(enemy);
+                            this.player.gainChi(this.player.chiGainPerHit);
+                            if (defeated) {
+                                this.player.gainChi(10);
+                            }
+                        }
+                    }
+                }
+
+                this.particles.forEach((p) => p.update(dt));
+                this.particles = this.particles.filter((p) => p.life > 0);
+            },
+            drawBackground(ctx) {
+                const width = 960;
+                const height = 540;
+                const gradient = ctx.createLinearGradient(0, 0, 0, height);
+                gradient.addColorStop(0, "#030611");
+                gradient.addColorStop(1, "#050910");
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, width, height);
+
+                ctx.save();
+                ctx.translate(-this.camera.x * 0.2, -this.camera.y * 0.2);
+                for (const star of this.backgroundStars) {
+                    star.twinkle += 0.01;
+                    const alpha = 0.3 + Math.sin(star.twinkle) * 0.2;
+                    ctx.fillStyle = `rgba(130, 190, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+
+                ctx.save();
+                ctx.translate(-this.camera.x * 0.45, -this.camera.y * 0.55);
+                ctx.fillStyle = "rgba(14, 22, 38, 0.4)";
+                for (let i = 0; i < 14; i++) {
+                    const width = 320;
+                    const height = 120 + Math.sin(i + this.ambientTimer * 0.4) * 40;
+                    const x = i * 240;
+                    const y = 420 + Math.sin(i * 1.3 + this.ambientTimer * 0.3) * 80;
+                    ctx.beginPath();
+                    ctx.ellipse(x, y, width, height, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            },
+            draw(ctx) {
+                this.drawBackground(ctx);
+
+                for (const platform of this.platforms) {
+                    platform.draw(ctx, this.camera);
+                }
+
+                for (const glyph of this.glyphs) {
+                    glyph.draw(ctx, this.camera);
+                }
+
+                for (const enemy of this.enemies) {
+                    enemy.draw(ctx, this.camera);
+                }
+
+                this.player.draw(ctx, this.camera);
+
+                for (const particle of this.particles) {
+                    particle.draw(ctx, this.camera);
+                }
+
+                this.drawUI(ctx);
+            },
+            drawUI(ctx) {
+                ctx.save();
+                ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+                const baseX = 32;
+                const baseY = 28;
+                for (let i = 0; i < this.player.maxHealth; i++) {
+                    drawHeart(ctx, baseX + i * 34, baseY, i < this.player.health);
+                }
+                const chiBarWidth = 170;
+                const chiBarHeight = 16;
+                ctx.fillStyle = "rgba(12, 26, 44, 0.8)";
+                ctx.fillRect(baseX, baseY + 40, chiBarWidth, chiBarHeight);
+                const chiFill = (this.player.chi / this.player.maxChi) * chiBarWidth;
+                const chiGradient = ctx.createLinearGradient(baseX, baseY + 40, baseX + chiBarWidth, baseY + 40);
+                chiGradient.addColorStop(0, "#1d3557");
+                chiGradient.addColorStop(1, "#5cc6ff");
+                ctx.fillStyle = chiGradient;
+                ctx.fillRect(baseX, baseY + 40, chiFill, chiBarHeight);
+                ctx.strokeStyle = "rgba(135, 188, 255, 0.6)";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(baseX, baseY + 40, chiBarWidth, chiBarHeight);
+
+                ctx.fillStyle = "rgba(180, 210, 255, 0.6)";
+                ctx.font = "14px 'Segoe UI', sans-serif";
+                ctx.fillText("Chi", baseX, baseY + 36);
+
+                ctx.restore();
+            },
+            spawnDust(x, y, amount = 1) {
+                for (let i = 0; i < amount * 8; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 60 + Math.random() * 120;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    this.particles.push(new Particle(x, y, vx, vy - 40, 0.4 + Math.random() * 0.3, "rgba(130,150,220,{a})", 6));
+                }
+            },
+            spawnSlash(player, direction) {
+                const originX = player.x + player.width / 2;
+                const originY = player.y + player.height / 2;
+                for (let i = 0; i < 12; i++) {
+                    const angle = Math.atan2(direction.y, direction.x) + (Math.random() - 0.5) * 0.6;
+                    const speed = 260 + Math.random() * 180;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    this.particles.push(new Particle(originX, originY, vx, vy, 0.25, "rgba(120,180,255,{a})", 4));
+                }
+            },
+            spawnHealBurst(x, y) {
+                for (let i = 0; i < 24; i++) {
+                    const angle = (Math.PI * 2 * i) / 24;
+                    const speed = 120 + Math.random() * 60;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    this.particles.push(new Particle(x, y, vx, vy, 0.7, "rgba(120,240,200,{a})", 6));
+                }
+            },
+            spawnDamageBurst(x, y) {
+                for (let i = 0; i < 18; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 80 + Math.random() * 140;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    this.particles.push(new Particle(x, y, vx, vy, 0.6, "rgba(255,120,120,{a})", 5));
+                }
+            },
+            spawnEnemyHit(x, y) {
+                for (let i = 0; i < 14; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 80 + Math.random() * 140;
+                    this.particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 0.4, "rgba(110,160,255,{a})", 5));
+                }
+            },
+            spawnEnemyDeath(x, y) {
+                for (let i = 0; i < 20; i++) {
+                    const angle = (Math.PI * 2 * i) / 20;
+                    const speed = 120 + Math.random() * 80;
+                    this.particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 0.7, "rgba(160,220,255,{a})", 6));
+                }
+            },
+            flashSave(x, y) {
+                this.lastSave = { x: this.player.x, y: this.player.y, chi: this.player.chi, health: this.player.health };
+                for (let i = 0; i < 28; i++) {
+                    const angle = (Math.PI * 2 * i) / 28;
+                    const speed = 140 + Math.random() * 50;
+                    this.particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 0.6, "rgba(180,220,255,{a})", 6));
+                }
+            },
+            playSwordSound() {
+                if (this.swordTimer > 0) return;
+                this.swordTimer = 0.08;
+                playTone(440, 0.06, 0.25);
+            },
+            playHealSound() {
+                playTone(660, 0.3, 0.3);
+            },
+            playHurtSound() {
+                if (this.hurtTimer > 0) return;
+                this.hurtTimer = 0.4;
+                playTone(200, 0.4, 0.2);
+            },
+            updateSoundTimers(dt) {
+                if (this.swordTimer > 0) this.swordTimer -= dt;
+                if (this.healTimer > 0) this.healTimer -= dt;
+                if (this.hurtTimer > 0) this.hurtTimer -= dt;
+            },
+            respawn(forceReload) {
+                const spawn = this.lastSave || { x: this.player.savePoint.x, y: this.player.savePoint.y };
+                this.player.x = spawn.x;
+                this.player.y = spawn.y;
+                if (forceReload && spawn.health) {
+                    this.player.health = Math.max(1, Math.min(this.player.maxHealth, spawn.health));
+                    this.player.chi = Math.max(0, Math.min(this.player.maxChi, spawn.chi || 0));
+                } else {
+                    this.player.health = this.player.maxHealth;
+                }
+                this.player.resetState();
+                this.player.invulnerableTimer = 0.8;
+                this.createEnemies();
+                this.attacks = [];
+            },
+        };
+
+        function rectsOverlap(a, b) {
+            return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+        }
+
+        function saveGame() {
+            const data = {
+                x: level.player.x,
+                y: level.player.y,
+                chi: level.player.chi,
+                health: level.player.health,
+            };
+            level.lastSave = data;
+            level.player.savePoint = { x: data.x, y: data.y };
+            try {
+                localStorage.setItem("haythamEchoSave", JSON.stringify(data));
+            } catch (error) {
+                console.warn("Could not save:", error);
+            }
+        }
+
+        level.init();
+
+        let lastTime = 0;
+        function loop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const dt = Math.min(0.05, (timestamp - lastTime) / 1000);
+            lastTime = timestamp;
+
+            level.updateSoundTimers(dt);
+            level.update(dt);
+            ctx.save();
+            ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+            level.draw(ctx);
+            ctx.restore();
+
+            input.pressed.clear();
+            input.released.clear();
+            requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+
+        function drawHeart(ctx, x, y, filled) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.beginPath();
+            ctx.moveTo(0, 10);
+            ctx.bezierCurveTo(-14, -6, -10, -28, 0, -18);
+            ctx.bezierCurveTo(10, -28, 14, -6, 0, 10);
+            ctx.closePath();
+            ctx.fillStyle = filled ? "#f977a6" : "rgba(249, 119, 166, 0.18)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255, 170, 210, 0.4)";
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function playTone(frequency, duration, volume = 0.2) {
+            if (!window.AudioContext && !window.webkitAudioContext) return;
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!playTone.context) {
+                playTone.context = new AudioCtx();
+            }
+            const ctxAudio = playTone.context;
+            const oscillator = ctxAudio.createOscillator();
+            const gain = ctxAudio.createGain();
+            oscillator.type = "triangle";
+            oscillator.frequency.setValueAtTime(frequency, ctxAudio.currentTime);
+            gain.gain.value = volume;
+            oscillator.connect(gain);
+            gain.connect(ctxAudio.destination);
+            oscillator.start();
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctxAudio.currentTime + duration);
+            oscillator.stop(ctxAudio.currentTime + duration + 0.05);
+        }
+
+        document.getElementById("downloadButton").addEventListener("click", async () => {
+            if (!haythamSpriteReady) {
+                await new Promise((resolve) => {
+                    const finalize = () => {
+                        inlineHaythamSprite();
+                        resolve();
+                    };
+                    haythamSpriteSheet.addEventListener("load", finalize, { once: true });
+                    haythamSpriteSheet.addEventListener("error", finalize, { once: true });
+                });
+            } else {
+                inlineHaythamSprite();
+            }
+            const source = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+            const blob = new Blob([source], { type: "text/html" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "haytham-metroidvania.html";
+            anchor.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        });
+    </script>
+</body>
+</html>
